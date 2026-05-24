@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from random import gauss, seed
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 
 @dataclass
@@ -29,22 +29,35 @@ class ScalarKalmanFilter:
 	q: float = 0.01
 	r: float = 1.0
 
+	def __post_init__(self) -> None:
+		"""Validate noise/covariance values after initialization."""
+		if self.p <= 0:
+			raise ValueError("initial covariance p must be > 0")
+		if self.q < 0:
+			raise ValueError("process noise q must be >= 0")
+		if self.r <= 0:
+			raise ValueError("measurement noise r must be > 0")
+
 	def predict(self) -> float:
 		"""Prediction step for a constant-state model."""
 		self.p = self.p + self.q
 		return self.x
 
-	def update(self, z: float) -> float:
+	def update(self, z: float, measurement_noise: Optional[float] = None) -> float:
 		"""Correction step with a new measurement."""
-		k = self.p / (self.p + self.r)
+		r_value = self.r if measurement_noise is None else float(measurement_noise)
+		if r_value <= 0:
+			raise ValueError("measurement_noise must be > 0")
+
+		k = self.p / (self.p + r_value)
 		self.x = self.x + k * (z - self.x)
 		self.p = (1.0 - k) * self.p
 		return self.x
 
-	def step(self, z: float) -> float:
+	def step(self, z: float, measurement_noise: Optional[float] = None) -> float:
 		"""Run predict + update and return the filtered value."""
 		self.predict()
-		return self.update(z)
+		return self.update(z, measurement_noise=measurement_noise)
 
 
 def apply_kalman_filter(
@@ -53,8 +66,18 @@ def apply_kalman_filter(
 	initial_error: float = 1.0,
 	process_noise: float = 0.01,
 	measurement_noise: float = 1.0,
+	measurement_noises: Optional[Iterable[float]] = None,
 ) -> List[float]:
-	"""Filter a sequence of measurements using a scalar Kalman filter."""
+	"""Filter a sequence of measurements using a scalar Kalman filter.
+
+	Args:
+		measurements: Input measurements.
+		initial_estimate: Initial state estimate.
+		initial_error: Initial covariance.
+		process_noise: Process noise covariance.
+		measurement_noise: Default measurement noise covariance.
+		measurement_noises: Optional per-measurement noise values.
+	"""
 	kf = ScalarKalmanFilter(
 		x=initial_estimate,
 		p=initial_error,
@@ -62,9 +85,17 @@ def apply_kalman_filter(
 		r=measurement_noise,
 	)
 
+	noise_iter = iter(measurement_noises) if measurement_noises is not None else None
 	filtered: List[float] = []
 	for value in measurements:
-		filtered.append(kf.step(float(value)))
+		if noise_iter is None:
+			current_noise = None
+		else:
+			try:
+				current_noise = next(noise_iter)
+			except StopIteration:
+				current_noise = None
+		filtered.append(kf.step(float(value), measurement_noise=current_noise))
 	return filtered
 
 
